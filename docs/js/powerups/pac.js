@@ -1,4 +1,7 @@
-// Start Pac-Ball mini-game via power-up
-export default function pacPower(state) {
-  state.toMode = 'pac';
-}
+export default {
+  id: 'pac',
+  label: 'Pac-Ball',
+  apply(state) {
+    state.toMode = 'pac';
+  }
+};
