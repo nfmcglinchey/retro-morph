@@ -1,4 +1,7 @@
-// Start Space Invaders mini-game via power-up
-export default function invadersPower(state) {
-  state.toMode = 'invaders';
-}
+export default {
+  id: 'invaders',
+  label: 'Invaders',
+  apply(state) {
+    state.toMode = 'invaders';
+  }
+};
