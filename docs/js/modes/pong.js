@@ -1,146 +1,115 @@
-import { clamp } from '../util.js';
-import { capBall, enforceMinAngle, circleRect, resolveBallBrick } from '../physics.js';
-import * as HUD from '../ui/hud.js';
-import { fillBackground, drawPaddle, drawBricks, drawCRTOverlay } from '../renderer.js';
-import { snapshotBricks, arrangeGrid, restoreBricks, clearSnapshots } from './brickMorph.js';
+import { compactBricks, restoreBricks, hitMorphWithCircle } from './brickMorph.js';
 
 export default {
   start(state, canvas) {
     state.mode = 'pong';
-    HUD.set.mode('Pong');
-    HUD.set.status('Mini-game');
 
-    // save & rearrange the live bricks into a compact grid at the top
-    const live = snapshotBricks(state);
-    arrangeGrid(state, live, { cols: 10, gap: 4, ox: 0, oy: 70 });
+    // Layout remaining bricks into a top rack
+    compactBricks(state, {
+      x: 70, y: 60, w: canvas.width - 140, h: 140,
+      cols: 13, rows: 4, gap: 4
+    });
 
-    // setup puck and top paddle
-    const p0x = (state.paddle.x + state.paddle.w / 2) || state.W / 2;
-    this.M = {
-      puck: { x: p0x, y: state.H * 0.6, vx: 260, vy: -260, r: 8 },
-      topX: (state.W - 120) / 2, topW: 120,
-      accel: 1.06,
-      timer: 18, timerMax: 18
+    // Puck + paddles
+    const speed = 300;
+    const r = 8;
+    state.morph = {
+      kind: 'pong',
+      timer: 18, max: 18,
+      puck: { x: canvas.width / 2, y: canvas.height * 0.60, vx: speed, vy: -speed, r },
+      top: { x: (canvas.width - 120) / 2, w: 120, h: 10, y: 28 },
+      chain: 0, accel: 1.06
     };
-    capBall(this.M.puck);
-
-    // crisp CSS->logical scaling
-    function resizeCanvas() {
-      const ctx = canvas.getContext('2d');
-      const rect = canvas.getBoundingClientRect();
-      ctx.setTransform(rect.width / state.W, 0, 0, rect.height / state.H, 0, 0);
-    }
-    resizeCanvas();
-    this._onResize = resizeCanvas;
-    window.addEventListener('resize', this._onResize);
   },
 
-  _finish(state) {
-    // put every brick back to its original coordinates
-    restoreBricks(state);
-    clearSnapshots(state);
-
-    // hand a normal ball back to Ball mode, launching upward from puck position
-    const bx = clamp(this.M.puck.x, 8, state.W - 8);
-    const by = Math.max(60, this.M.puck.y);
-    state.toMode = 'ball'; // main.js will switch modes next frame
-    state._handoffBall = { x: bx, y: by, vx: this.M.puck.vx, vy: -Math.abs(this.M.puck.vy), r: 8 };
-
-    // cleanup
-    window.removeEventListener('resize', this._onResize);
-  },
-
-  update(dt, io, state) {
-    const M = this.M;
+  update(dt, input, state) {
+    const W = 960, H = 600; // canvas logical size
+    const M = state.morph;
     M.timer -= dt;
-    if (M.timer <= 0) return this._finish(state);
+    if (M.timer <= 0) return this.end(state, true);
 
-    // move the bottom paddle with player input
-    const move = (io.right ? 1 : 0) - (io.left ? 1 : 0);
-    const p = state.paddle;
-    p.x = clamp(p.x + move * p.speed * dt, 0, state.W - p.w);
+    // Move bottom paddle from main state
+    const PADDLE = { y: H - 38, w: state.paddleW || 120, h: 16 };
+    const move = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    state.paddleX = Math.max(0, Math.min(W - (PADDLE.w || 120), state.paddleX + (560 * move * dt)));
 
-    // puck motion
-    const b = M.puck;
-    b.x += b.vx * dt; b.y += b.vy * dt;
-    if (b.x < b.r) { b.x = b.r; b.vx *= -1; }
-    if (b.x > state.W - b.r) { b.x = state.W - b.r; b.vx *= -1; }
-    if (b.y < 28 + b.r) { b.y = 28 + b.r; b.vy = Math.abs(b.vy); }
-    if (b.y > state.H + b.r) return this._finish(state); // out bottom ends mini-game
-    capBall(b);
+    // Puck
+    const p = M.puck;
+    p.x += p.vx * dt; p.y += p.vy * dt;
 
-    // collide with player paddle
-    const pad = { x: p.x, y: p.y, w: p.w, h: p.h };
-    if (circleRect(b.x, b.y, b.r, pad) && b.vy > 0) {
-      b.y = pad.y - b.r - 0.01;
-      // arkanoid-style rebound
-      const hit = (b.x - (pad.x + pad.w / 2)) / (pad.w / 2);
-      const t = Math.max(-1, Math.min(1, hit));
-      const theta = Math.abs(t) * (Math.PI * (60 / 180)); // 60°
-      const speed = Math.hypot(b.vx, b.vy);
-      const dirX = t >= 0 ? 1 : -1;
-      b.vx = dirX * speed * Math.cos(theta);
-      b.vy = -Math.abs(speed * Math.sin(theta));
-      enforceMinAngle(b);
-      // small speed-up per rally
-      b.vx *= M.accel; b.vy *= M.accel; capBall(b);
+    // Walls
+    if (p.x < p.r) { p.x = p.r; p.vx *= -1; }
+    if (p.x > W - p.r) { p.x = W - p.r; p.vx *= -1; }
+
+    // Top paddle AI
+    M.top.x = Math.max(0, Math.min(W - M.top.w, M.top.x + (p.x - (M.top.x + M.top.w / 2)) * 0.05));
+
+    // Score if you pass the top paddle without touching it
+    if (p.y - p.r < M.top.y && !(p.x > M.top.x && p.x < M.top.x + M.top.w)) {
+      state.score += 120 + 12 * (M.chain || 0);
+      state.lives = Math.min(99, (state.lives || 3) + 1);
+      try { document.getElementById('uiLives').textContent = state.lives; } catch {}
+      window.SFX?.win();
+      return this.end(state, true);
     }
 
-    // simple top AI paddle
-    M.topX = clamp(M.topX + (b.x - (M.topX + M.topW / 2)) * 0.05, 0, state.W - M.topW);
-    // bounce on top paddle if intersecting
-    const top = { x: M.topX, y: 28, w: M.topW, h: 10 };
-    if (circleRect(b.x, b.y, b.r, top) && b.vy < 0) { b.y = top.y + top.h + b.r + 0.01; b.vy = Math.abs(b.vy) * M.accel; capBall(b); }
+    // Miss bottom = lose
+    if (p.y > H + p.r) {
+      window.SFX?.lose();
+      state.lives = Math.max(0, (state.lives || 3) - 1);
+      try { document.getElementById('uiLives').textContent = state.lives; } catch {}
+      return this.end(state, false);
+    }
 
-    // brick collisions — puck breaks bricks exactly like Ball mode
-    for (const br of state.bricks) {
-      if (br.type === 'broken') continue;
-      if (circleRect(b.x, b.y, b.r, br)) {
-        resolveBallBrick(b, br);
-        if (br.type !== 'unbreakable') {
-          br.hit++;
-          if (br.type !== 'double' || br.hit >= 2) {
-            br.type = 'broken';
-            state.score += 10; HUD.set.score(state.score);
-          }
-        }
-        break;
-      }
+    // Collide bottom paddle
+    const pad = { x: state.paddleX, y: PADDLE.y, w: PADDLE.w || 120, h: PADDLE.h || 16 };
+    if (p.y + p.r > pad.y && p.y - p.r < pad.y + pad.h && p.x > pad.x && p.x < pad.x + pad.w && p.vy > 0) {
+      p.y = pad.y - p.r - 0.01;
+      p.vy = -Math.abs(p.vy) * M.accel;
+      p.vx *= M.accel;
+      M.chain = (M.chain || 0) + 1;
+      state.score += 6 * M.chain;
+      window.SFX?.paddle();
+    }
+
+    // Collide top paddle
+    if (p.y - p.r < M.top.y + M.top.h && p.x > M.top.x && p.x < M.top.x + M.top.w && p.vy < 0) {
+      p.y = M.top.y + M.top.h + p.r + 0.01;
+      p.vy = Math.abs(p.vy) * M.accel;
+      p.vx *= M.accel;
+    }
+
+    // Hit mapped bricks → break persisting source bricks
+    if (hitMorphWithCircle(state, p.x, p.y, p.r)) {
+      state.score += 10;
+      p.vy *= -1;
+      window.SFX?.brick();
     }
   },
 
   draw(ctx, state) {
-    const M = this.M;
+    // Bricks are drawn by the global renderer (already moved), so just draw mode UI
+    const W = 960;
     ctx.save();
-    ctx.clearRect(0, 0, state.W, state.H);
-    fillBackground(ctx, state.W, state.H);
-
-    // bricks (in their temporary, rearranged places)
-    drawBricks(ctx, state.bricks);
-
-    // paddles
-    drawPaddle(ctx, state.paddle);                 // bottom (player)
-    ctx.fillStyle = '#cbd5e1';                     // top (AI)
-    ctx.fillRect(M.topX, 28, M.topW, 10);
-
-    // puck
-    ctx.beginPath(); ctx.arc(M.puck.x, M.puck.y, M.puck.r, 0, Math.PI * 2);
-    const g = ctx.createRadialGradient(M.puck.x - 2, M.puck.y - 2, 1, M.puck.x, M.puck.y, M.puck.r);
-    g.addColorStop(0, '#fff'); g.addColorStop(1, '#dbeafe'); ctx.fillStyle = g; ctx.fill();
-
-    // timer ring (top-left)
-    const tFrac = Math.max(0, M.timer) / M.timerMax;
-    ctx.save();
+    // Timer ring
     ctx.strokeStyle = '#fca5a5';
-    ctx.globalAlpha = 0.8;
-    ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(30, 30, 18, -Math.PI / 2, -Math.PI / 2 + tFrac * Math.PI * 2);
+    ctx.arc(30, 30, 18, -Math.PI / 2, -Math.PI / 2 + (state.morph.timer / state.morph.max) * Math.PI * 2);
     ctx.stroke();
+    // Legend
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '13px system-ui';
+    const text = '←/→ move • Score past top';
+    const pad = 10, mw = ctx.measureText(text).width + pad * 2;
+    const x = W - mw - 12, y = 12;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, mw, 32);
+    ctx.fillStyle = '#e5e7eb'; ctx.fillText(text, x + pad, y + 21);
     ctx.restore();
+  },
 
-    // optional scanlines/vignette follow global CRT
-    drawCRTOverlay(ctx);
-    ctx.restore();
+  end(state, _success) {
+    restoreBricks(state);
+    state.toMode = 'ball';
   }
 };
