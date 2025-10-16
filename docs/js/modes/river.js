@@ -3,7 +3,7 @@
 // Controls: ←/→ steer, Space fire
 // Goal: stay within banks, shoot foes & bridges. Timer-based run; on crash you lose a life.
 
-import { arrangeGrid, restoreGrid } from './brickMorph.js'; // safe if missing
+import { compactBricks, restoreBricks } from './brickMorph.js';
 
 const W = 960, H = 600;
 
@@ -321,3 +321,4 @@ function drawRiver(ctx, M){
     ctx.fillRect(cx + hw, sy + M.scroll, W - (cx + hw), seg+1);
   }
 }
+
