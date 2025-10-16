@@ -1,105 +1,186 @@
-import { clamp } from '../util.js';
-import * as HUD from '../ui/hud.js';
-import { fillBackground, drawCRTOverlay } from '../renderer.js';
-import { snapshotBricks, arrangeGrid, restoreBricks, clearSnapshots } from './brickMorph.js';
+// docs/js/modes/river.js
+// Mini-game: River Raid (with brick-morph integration + persistent destruction)
 
+import {
+  compactBricks,
+  restoreBricks,
+  hitMorphWithRect
+} from './brickMorph.js';
+
+// ---- Tunables ----
+const TIMER_SECS   = 24;
+
+const GRID_CFG     = { cols: 12, rows: 6, gap: 6, marginX: 100, topY: 60, height: 260 };
+// The compacted bricks play the role of bridges/targets. Bullets that hit a mapped brick
+// permanently break the backing brick in the main game.
+
+const PLANE_SPEED  = 320;
+const FIRE_CD      = 0.18;
+const BULLET_VY    = -460;
+
+const FOE_MIN_CD   = 0.9;
+const FOE_VAR_CD   = 0.6;
+const FOE_SPEED_MIN= 140;
+const FOE_SPEED_VAR= 80;
+
+// ---- Helpers ----
+function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+// ---- Mode ----
 export default {
-  start(state, canvas){
-    state.mode='river'; HUD.set.mode('River Raid'); HUD.set.status('Mini-game');
+  start(state, canvas) {
+    state.mode = 'river';
 
-    // live bricks just compacted to get them out of the way at top
-    const live=snapshotBricks(state);
-    arrangeGrid(state, live, { cols: 12, gap: 6, oy: 60 });
+    // Compact remaining (unbroken) bricks into a mid/upper block.
+    compactBricks(state, {
+      x: GRID_CFG.marginX,
+      y: GRID_CFG.topY,
+      w: (canvas.width || 960) - GRID_CFG.marginX * 2,
+      h: GRID_CFG.height,
+      cols: GRID_CFG.cols,
+      rows: GRID_CFG.rows,
+      gap: GRID_CFG.gap
+    });
 
-    const plane={x:state.W/2, y:state.H-80, speed:320, cd:0};
-    const river=makeRiver(state); this.M={ plane, river, scroll:0, bullets:[], foes:[], bridges:[], tSpawn:0, timer:24, timerMax:24 };
+    const W = canvas.width || 960;
+    const H = canvas.height || 600;
 
-    const resize=()=>{ const ctx=canvas.getContext('2d'); const r=canvas.getBoundingClientRect(); ctx.setTransform(r.width/state.W,0,0,r.height/state.H,0,0); };
-    resize(); this._onResize=resize; window.addEventListener('resize', this._onResize);
+    state.morph = {
+      kind: 'river',
+      timer: TIMER_SECS,
+      max:   TIMER_SECS,
+      plane:  { x: W / 2, y: H - 80, speed: PLANE_SPEED, cd: 0 },
+      bullets: [],
+      foes:    [],
+      tSpawn:  0
+    };
   },
 
-  _finish(state){
-    restoreBricks(state); clearSnapshots(state);
-    const p=this.M.plane; state.toMode='ball'; state._handoffBall={x:p.x,y:p.y-10,vx:0,vy:-300,r:8};
-    window.removeEventListener('resize', this._onResize);
-  },
+  update(dt, input, state) {
+    const W = 960, H = 600;
+    const M = state.morph;
+    if (!M) return;
 
-  update(dt, io, state){
-    const M=this.M, W=state.W, H=state.H; M.timer-=dt; if(M.timer<=0) return this._finish(state);
+    // --- timer ---
+    M.timer -= dt;
+    if (M.timer <= 0) return this.end(state, true);
 
-    // scroll
-    M.scroll += 120*dt;
+    // --- plane movement ---
+    const steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    M.plane.x = clamp(M.plane.x + steer * M.plane.speed * dt, 20, W - 20);
 
-    // plane control
-    const steer=(io.right?1:0)-(io.left?1:0);
-    M.plane.x = clamp(M.plane.x + steer*M.plane.speed*dt, 20, W-20);
-    M.plane.cd -= dt; if(io.fire && M.plane.cd<=0){ M.plane.cd=0.18; M.bullets.push({x:M.plane.x, y:M.plane.y-14, vy:-460}); }
+    // --- fire ---
+    M.plane.cd -= dt;
+    if (input.space && M.plane.cd <= 0) {
+      M.plane.cd = FIRE_CD;
+      M.bullets.push({ x: M.plane.x, y: M.plane.y - 14, w: 4, h: 12, vy: BULLET_VY });
+    }
 
-    // spawn foes / bridges
+    // --- spawn foes ---
     M.tSpawn -= dt;
-    if(M.tSpawn<=0){
-      M.tSpawn = 0.9 + Math.random()*0.6;
-      if(Math.random()<0.18){ // bridge
-        const sy=-H+M.scroll-40; const s=sampleRiver(M.river, sy);
-        M.bridges.push({ y: sy, cx: s.cx, hw: s.hw-10, hp: 3 });
-      }else{ // foe inside river
-        const sy=-H+M.scroll-20; const s=sampleRiver(M.river, sy);
-        const fx = clamp(s.cx+(Math.random()*2-1)*(s.hw-16), 30, W-30);
-        M.foes.push({ x: fx, y: sy, vy: 140+Math.random()*60 });
+    if (M.tSpawn <= 0) {
+      M.tSpawn = FOE_MIN_CD + Math.random() * FOE_VAR_CD;
+      M.foes.push({
+        x: 40 + Math.random() * (W - 80),
+        y: -20,
+        vy: FOE_SPEED_MIN + Math.random() * FOE_SPEED_VAR
+      });
+    }
+
+    // --- bullets advance + hit mapped bricks (bridges/targets) ---
+    for (const b of M.bullets) {
+      b.y += b.vy * dt;
+      // Break mapped brick -> backing brick becomes 'broken' persistently
+      if (hitMorphWithRect(state, { x: b.x - 2, y: b.y - 6, w: 4, h: 12 })) {
+        b.hit = true;
+        state.score += 5;
+        window.SFX?.brick?.();
       }
     }
+    M.bullets = M.bullets.filter(b => !b.hit && b.y > -24);
 
-    // integrate actors
-    for(const b of M.bullets) b.y += b.vy*dt; M.bullets = M.bullets.filter(b=>b.y>-20);
-    for(const f of M.foes) f.y += 120*dt + f.vy*dt;
-    for(const br of M.bridges) br.y += 120*dt;
-
-    // bounds: must stay in river
-    if(!insideRiver(M.plane.x, M.plane.y, M)) return this._finish(state);
-
-    // collisions
-    for(const f of M.foes){
-      if(Math.abs(f.x-M.plane.x)<12 && Math.abs(f.y-M.plane.y)<12) return this._finish(state);
-      for(const b of M.bullets){ if(Math.abs(f.x-b.x)<10 && Math.abs(f.y-b.y)<12){ f.hit=true; b.hit=true; state.score+=8; } }
+    // --- foes move + collisions (with bullets and plane) ---
+    for (const f of M.foes) {
+      f.y += f.vy * dt;
+      // plane crash
+      if (Math.abs(f.x - M.plane.x) < 12 && Math.abs(f.y - M.plane.y) < 12) {
+        return this.end(state, false);
+      }
+      // bullets vs foes
+      for (const b of M.bullets) {
+        if (Math.abs(f.x - b.x) < 10 && Math.abs(f.y - b.y) < 12) {
+          f.hit = true; b.hit = true;
+          state.score += 8;
+        }
+      }
     }
-    M.foes = M.foes.filter(f=>!f.hit && f.y<H+30); M.bullets = M.bullets.filter(b=>!b.hit);
+    M.foes    = M.foes.filter(f => !f.hit && f.y < H + 30);
+    M.bullets = M.bullets.filter(b => !b.hit);
 
-    for(const br of M.bridges){
-      for(const b of M.bullets){ if(Math.abs(b.y-br.y)<6 && b.x>br.cx-br.hw && b.x<br.cx+br.hw){ b.hit=true; br.hp--; state.score+=5; if(br.hp<=0) br.down=true; } }
-      if(!br.down && Math.abs(M.plane.y-br.y)<8 && M.plane.x>br.cx-br.hw && M.plane.x<br.cx+br.hw) return this._finish(state);
-    }
-    M.bridges = M.bridges.filter(br=>br.y<H+20 && !br.down);
+    // Optional failure if too many foes pass? (Omitted—timer/plane crash are primary conditions.)
   },
 
-  draw(ctx, state){
-    const M=this.M, W=state.W, H=state.H, segH=M.river.segH;
-    ctx.save(); ctx.clearRect(0,0,W,H); fillBackground(ctx,W,H);
+  draw(ctx, state) {
+    const M = state.morph;
+    if (!M) return;
 
-    // river stripes
-    for(let sy=-H; sy<H; sy+=segH){
-      const s=sampleRiver(M.river, sy+M.scroll); const cx=s.cx, hw=s.hw;
-      ctx.fillStyle='#0b0c15'; ctx.fillRect(0, sy+M.scroll, cx-hw, segH+1);
-      ctx.fillStyle='#1e3a8a'; ctx.fillRect(cx-hw, sy+M.scroll, hw*2, segH+1);
-      ctx.fillStyle='#0b0c15'; ctx.fillRect(cx+hw, sy+M.scroll, W-(cx+hw), segH+1);
+    // Timer ring
+    ctx.save();
+    ctx.strokeStyle = '#67e8f9';
+    ctx.beginPath();
+    ctx.arc(30, 30, 18, -Math.PI / 2, -Math.PI / 2 + (M.timer / M.max) * Math.PI * 2);
+    ctx.stroke();
+
+    // Plane
+    ctx.save();
+    ctx.translate(M.plane.x, M.plane.y);
+    ctx.fillStyle = '#67e8f9';
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(6, 8);
+    ctx.lineTo(-6, 8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Foes
+    ctx.fillStyle = '#f87171';
+    for (const f of M.foes) ctx.fillRect(f.x - 8, f.y - 8, 16, 16);
+
+    // Bullets
+    ctx.fillStyle = '#ffee58';
+    for (const b of M.bullets) ctx.fillRect(b.x - 2, b.y - 6, 4, 12);
+
+    // Legend
+    const W = 960;
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '13px system-ui';
+    const text = '←/→ steer • Space fire';
+    const pad = 10, mw = ctx.measureText(text).width + pad * 2;
+    const x = W - mw - 12, y = 12;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, mw, 32);
+    ctx.fillStyle = '#e5e7eb'; ctx.fillText(text, x + pad, y + 21);
+
+    ctx.restore();
+  },
+
+  end(state, success) {
+    if (!success) {
+      state.lives = Math.max(0, (state.lives || 3) - 1);
+      try {
+        const el = document.getElementById('uiLives');
+        if (el) el.textContent = state.lives;
+      } catch {}
+      window.SFX?.lose?.();
+    } else {
+      window.SFX?.win?.();
     }
 
-    // plane
-    ctx.save(); ctx.translate(M.plane.x,M.plane.y); ctx.fillStyle='#67e8f9';
-    ctx.beginPath(); ctx.moveTo(0,-10); ctx.lineTo(6,8); ctx.lineTo(-6,8); ctx.closePath(); ctx.fill(); ctx.restore();
+    // Only intact bricks return; bricks destroyed during River stay broken in Ball
+    restoreBricks(state);
 
-    // foes
-    ctx.fillStyle='#f87171'; for(const f of M.foes) ctx.fillRect(f.x-8,f.y-8,16,16);
-    // bridges
-    ctx.fillStyle='#d1d5db'; for(const br of M.bridges) ctx.fillRect(br.cx-br.hw, br.y-6, br.hw*2, 12);
-    // bullets
-    ctx.fillStyle='#ffee58'; for(const b of M.bullets) ctx.fillRect(b.x-2,b.y-6,4,12);
-
-    drawTimer(ctx, M.timer/M.timerMax, '#67e8f9'); drawCRTOverlay(ctx); ctx.restore();
+    // Back to Ball mode
+    state.toMode = 'ball';
   }
 };
-
-function makeRiver(state){ const segH=24, total=Math.ceil((state.H*2)/segH)+2; let cx=state.W/2, hw=120; const path=[];
-  for(let i=0;i<total;i++){ cx+=(Math.random()*80-40); cx=Math.max(160,Math.min(state.W-160,cx)); hw+= (Math.random()*30-15); hw=Math.max(80,Math.min(180,hw)); path.push({ y:-i*segH, cx, hw }); } return { segH, path }; }
-function sampleRiver(river, sy){ const i=Math.floor((-sy)/river.segH); const a=river.path[i]||river.path.at(-1); const b=river.path[i+1]||a; const t=(((-sy)%river.segH)+river.segH)%river.segH/river.segH; const cx=a.cx*(1-t)+b.cx*t; const hw=a.hw*(1-t)+b.hw*t; return {cx,hw}; }
-function insideRiver(x,y,M){ const sy=y-M.scroll; const s=sampleRiver(M.river, sy); return (x>s.cx-s.hw && x<s.cx+s.hw); }
-function drawTimer(ctx, frac, color){ ctx.save(); ctx.strokeStyle=color; ctx.globalAlpha=0.8; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(30,30,18,-Math.PI/2,-Math.PI/2+Math.max(0,frac)*Math.PI*2); ctx.stroke(); ctx.restore(); }
