@@ -1,0 +1,42 @@
+/* ===== Settings & Panels ===== */
+.panel {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background: rgba(0,0,0,.45);
+  backdrop-filter: blur(2px);
+  z-index: 20;
+}
+.panel.hidden { display: none; }
+
+.panel-body {
+  width: min(420px, 92vw);
+  background: #121524;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 20px 80px rgba(0,0,0,.6);
+}
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.grid { display: grid; gap: 10px; padding-top: 12px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+
+/* ===== Mini-Game Select (larger panel) ===== */
+#miniPanel.panel .panel-body { width: min(560px, 92vw); }
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px; padding-top: 12px;
+}
+.mini {
+  display: grid; place-items: center; text-align: center;
+  padding: 12px; height: 86px; border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.12); background: #0f1322;
+}
+.mini.locked { opacity: .5; filter: grayscale(0.6); }
+.mini strong { color: #fff; font-size: 14px; }
+.mini small  { color: #9aa0a6; font-size: 11px; }
+.mini button { margin-top: 8px; }

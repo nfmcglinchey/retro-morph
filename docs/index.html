@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Brick Breaker — Retro Morph Edition</title>
+
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/panels.css" />
+  <link rel="stylesheet" href="css/touch.css" />
+</head>
+
+<body>
+  <!-- HUD (Heads-Up Display) -->
+  <div class="header" aria-live="polite">
+    <div class="chip">Level: <strong id="uiLevel">1</strong></div>
+    <div class="chip">Score: <strong id="uiScore">0</strong></div>
+    <div class="chip">Lives: <strong id="uiLives">3</strong></div>
+    <div class="chip">Mode: <strong id="uiMode">Ball</strong></div>
+    <div class="chip">Status: <strong id="uiStatus">Ready</strong></div>
+  </div>
+
+  <!-- Game Container -->
+  <div class="canvas-wrap">
+    <canvas id="game" width="960" height="600" aria-label="Brick Breaker canvas" role="img"></canvas>
+
+    <!-- Power-up Label -->
+    <div id="powerLabel" class="power-label" aria-hidden="true">POWER</div>
+
+    <!-- Action Buttons -->
+    <div class="actions">
+      <button id="btnPause" class="btn">Pause (P)</button>
+      <button id="btnReset" class="btn">Reset</button>
+      <button id="btnSettings" class="btn">Settings</button>
+    </div>
+
+    <!-- Touch Controls -->
+    <div id="touch" class="touch hidden" aria-hidden="true">
+      <button id="tLeft" aria-label="Move Left">◀</button>
+      <button id="tFire" aria-label="Action">●</button>
+      <button id="tRight" aria-label="Move Right">▶</button>
+    </div>
+
+    <!-- FPS Counter -->
+    <div id="fps" class="fps">60 fps</div>
+  </div>
+
+  <!-- Settings Panel -->
+  <div id="panel" class="panel hidden" role="dialog" aria-modal="true" aria-labelledby="panelTitle">
+    <div class="panel-body">
+      <div class="panel-header">
+        <h2 id="panelTitle">Settings</h2>
+        <button id="btnClose" class="btn ghost" aria-label="Close">×</button>
+      </div>
+      <div class="grid">
+        <label class="row"><span>CRT effect</span>
+          <input id="optCrt" type="checkbox" checked />
+        </label>
+        <label class="row"><span>Sound effects</span>
+          <input id="optSfx" type="checkbox" checked />
+        </label>
+        <label class="row"><span>Music (subtle)</span>
+          <input id="optMusic" type="checkbox" />
+        </label>
+        <label class="row"><span>Difficulty</span>
+          <select id="optDiff">
+            <option value="normal" selected>Normal</option>
+            <option value="hard">Hard</option>
+            <option value="zen">Zen</option>
+          </select>
+        </label>
+        <label class="row"><span>Colorblind Mode (toggle: C)</span>
+          <input id="optCB" type="checkbox" />
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mini-Game Select Panel -->
+  <div id="miniPanel" class="panel hidden" role="dialog" aria-modal="true" aria-labelledby="miniTitle">
+    <div class="panel-body">
+      <div class="panel-header">
+        <h2 id="miniTitle">Mini-Game Select</h2>
+        <button id="btnMiniClose" class="btn ghost" aria-label="Close">×</button>
+      </div>
+      <div class="mini-grid">
+        <div class="mini" data-kind="pong">
+          <strong>Pong</strong><small>Rally to win</small><button class="btn btnStart">Start</button>
+        </div>
+        <div class="mini" data-kind="pac">
+          <strong>Pac-Ball</strong><small>Eat bricks, dodge ghosts</small><button class="btn btnStart">Start</button>
+        </div>
+        <div class="mini" data-kind="tron">
+          <strong>Tron</strong><small>Don’t hit trail</small><button class="btn btnStart">Start</button>
+        </div>
+        <div class="mini" data-kind="asteroids">
+          <strong>Asteroids</strong><small>Blast the rocks</small><button class="btn btnStart">Start</button>
+        </div>
+        <div class="mini" data-kind="invaders">
+          <strong>Invaders</strong><small>Clear the swarm</small><button class="btn btnStart">Start</button>
+        </div>
+        <div class="mini" data-kind="river">
+          <strong>River Raid</strong><small>Konami unlock</small><button class="btn btnStart">Start</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Load main JavaScript -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

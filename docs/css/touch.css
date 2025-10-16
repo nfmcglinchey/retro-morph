@@ -1,0 +1,16 @@
+/* ===== Mobile touch controls ===== */
+.touch {
+  position: absolute; inset: auto 0 0 0;
+  display: flex; justify-content: space-between;
+  padding: 8px; z-index: 6; pointer-events: none;
+}
+.touch.hidden { display: none; }
+.touch button {
+  pointer-events: auto;
+  background: rgba(0,0,0,.45);
+  border: 1px solid rgba(255,255,255,.15);
+  color: #fff;
+  width: 80px; height: 80px; border-radius: 50%;
+  font-size: 20px;
+}
+#tFire { width: 96px; height: 96px; font-size: 26px; }
