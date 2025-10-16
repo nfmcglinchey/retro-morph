@@ -33,8 +33,7 @@ Object.assign(state.unlocks, loadUnlocks());
 function renderMiniLocks() {
   const panel = document.getElementById('miniPanel');
   if (!panel) return;
-  const tiles = panel.querySelectorAll('.mini');
-  tiles.forEach(t => {
+  panel.querySelectorAll('.mini').forEach(t => {
     const kind = t.getAttribute('data-kind');
     const locked = (kind === 'river') ? !state.unlocks.river : !state.unlocks[kind];
     t.classList.toggle('locked', locked);
@@ -91,21 +90,28 @@ window.addEventListener('keydown', (e) => {
     konamiIdx++;
     if (konamiIdx === KONAMI.length) {
       konamiIdx = 0;
+
+      // Unlock River + grant 99 lives
       state.unlocks.river = true;
+      state.lives = 99;
+      try {
+        const el = document.getElementById('uiLives');
+        if (el) el.textContent = state.lives;
+      } catch {}
+
       saveUnlocks();
       renderMiniLocks();
-      try { HUD.set.status('Konami unlocked: River Raid'); } catch {}
+      try { HUD.set.status('Konami unlocked: River Raid + 99 Lives'); } catch {}
     }
   } else {
     konamiIdx = (e.code === KONAMI[0]) ? 1 : 0;
   }
 
-  // NEAL tracker
+  // NEAL tracker (opens panel and unlocks standard minis)
   if (e.code === NEAL[nealIdx]) {
     nealIdx++;
     if (nealIdx === NEAL.length) {
       nealIdx = 0;
-      // unlock all standard mini-games
       ['pong','pac','tron','asteroids','invaders','snake'].forEach(k => state.unlocks[k] = true);
       saveUnlocks();
       renderMiniLocks();
