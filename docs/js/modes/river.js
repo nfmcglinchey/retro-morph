@@ -36,8 +36,9 @@ export default {
     state.mode = 'river';
     state._skipRebuildOnReturn = true;
 
-    // morph bricks into vertical banks if you implemented brickMorph (safe if not)
-    try { arrangeGrid?.(state, { mode: 'river' }); } catch {}
+    // Morph bricks to side banks so remaining bricks persist and return later.
+    // Safe if brickMorph isn't present (wrapped in try).
+    try { compactBricks?.(state, { x: 0, y: 0, w: W, h: H, cols: 2, rows: 12 }); } catch {}
 
     // make scene
     const path = buildRiverPath();
@@ -55,9 +56,9 @@ export default {
       timerMax: SPAN_TIME,
       scroll: 0,
       path,                  // array of control points
-      foes: [],              // {x,y,vy}
+      foes: [],              // {x,y,vy,hit}
       bridges: [],           // {y, cx, hw, hp, down}
-      bullets: [],           // {x,y,vy}
+      bullets: [],           // {x,y,vy,hit}
       spawnT: 0,             // generic spawner cooldown
       plane
     };
@@ -242,7 +243,8 @@ export default {
   },
 
   _handoffToBall(state, hand){
-    try { restoreGrid?.(state); } catch {}
+    // restore original brick layout (only non-destroyed bricks return)
+    try { restoreBricks?.(state); } catch {}
     state._river = null;
     state.mode = 'ball';
 
@@ -321,4 +323,3 @@ function drawRiver(ctx, M){
     ctx.fillRect(cx + hw, sy + M.scroll, W - (cx + hw), seg+1);
   }
 }
-
