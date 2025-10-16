@@ -12,7 +12,7 @@ import { MODES } from './modes/index.js';
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
-// create and hydrate state
+// --- create and hydrate state ---
 const state = createState();
 Object.assign(state.settings, loadSettings());
 setDifficulty(state.settings.diff);
@@ -69,6 +69,7 @@ Panels.mount(state, {
 });
 
 // ---- Input bindings ----
+Input.bind();         // ensure keyboard works for all modes (esp. River)
 Input.bindTouch();
 window.addEventListener('keydown', e => {
   if (e.code === 'KeyP') {
@@ -98,16 +99,16 @@ window.addEventListener('keydown', (e) => {
         const el = document.getElementById('uiLives');
         if (el) el.textContent = state.lives;
       } catch {}
-
       saveUnlocks();
       renderMiniLocks();
       try { HUD.set.status('Konami unlocked: River Raid + 99 Lives'); } catch {}
+      window.SFX?.win?.();
     }
   } else {
     konamiIdx = (e.code === KONAMI[0]) ? 1 : 0;
   }
 
-  // NEAL tracker (opens panel and unlocks standard minis)
+  // NEAL tracker (case-insensitive)
   if (e.code === NEAL[nealIdx]) {
     nealIdx++;
     if (nealIdx === NEAL.length) {
@@ -117,6 +118,7 @@ window.addEventListener('keydown', (e) => {
       renderMiniLocks();
       openMiniPanel();
       try { HUD.set.status('Mini-Game Select unlocked'); } catch {}
+      window.SFX?.power?.();
     }
   } else {
     nealIdx = (e.code === NEAL[0]) ? 1 : 0;
