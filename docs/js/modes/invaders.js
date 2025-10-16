@@ -1,139 +1,208 @@
-import { clamp } from '../util.js';
-import * as HUD from '../ui/hud.js';
-import { fillBackground, drawPaddle, drawCRTOverlay } from '../renderer.js';
-import { snapshotBricks, arrangeGrid, restoreBricks, clearSnapshots } from './brickMorph.js';
+// docs/js/modes/invaders.js
+// Mini-game: Space Invaders (with brick-morph integration and persistent destruction)
+
+import {
+  compactBricks,
+  restoreBricks,
+  hitMorphWithRect
+} from './brickMorph.js';
+
+// ---- Tunables ----
+const TIMER_SECS   = 16;
+const COLS         = 10;
+const ROWS         = 5;
+const GAP          = 6;
+const AREA_MARGINX = 90;
+const AREA_Y       = 80;
+const AREA_H       = 200;
+
+const STEP_PIX     = 22;   // horizontal step speed basis
+const DROP_PIX     = 12;   // drop when bouncing at edges
+const SPEED_GAIN   = 2.0;  // speeds up over time
+
+const FIRE_CD      = 0.16; // player auto-fire cooldown
+const BULLET_VY    = -480; // px/s upwards
 
 export default {
   start(state, canvas) {
     state.mode = 'invaders';
-    HUD.set.mode('Space Invaders');
-    HUD.set.status('Mini-game');
 
-    // Snapshot current live bricks and arrange them into rows for the fleet
-    const live = snapshotBricks(state);
-    arrangeGrid(state, live, { cols: 10, gap: 6, ox: 0, oy: 90 }); // bricks now represent aliens
+    // Pack remaining bricks into an invader block region
+    compactBricks(state, {
+      x: AREA_MARGINX,
+      y: AREA_Y,
+      w: (canvas.width || 960) - AREA_MARGINX * 2,
+      h: AREA_H,
+      cols: COLS,
+      rows: ROWS,
+      gap: GAP
+    });
 
-    // mini-game state
-    this.M = {
-      dir: 1, step: 22, drop: 12, speed: 30,  // fleet motion
-      timer: 16, timerMax: 16,
-      bullets: [], cd: 0                        // player bullets
+    // Stash a "base" position for each mapped brick so we can animate offsets
+    // by mutating m.to per frame (helpers read m.to for collisions).
+    if (state._morph?.map) {
+      for (const m of state._morph.map) {
+        m.base = { x: m.to.x, y: m.to.y, w: m.to.w, h: m.to.h };
+      }
+    }
+
+    const W = canvas.width || 960;
+    const H = canvas.height || 600;
+
+    state.morph = {
+      kind: 'invaders',
+      timer: TIMER_SECS,
+      max:   TIMER_SECS,
+      // block motion
+      dir: 1,
+      step: STEP_PIX,
+      drop: DROP_PIX,
+      speed: 30,   // base "tempo"; increases over time
+      ox: 0,       // horizontal offset
+      oy: 0,       // vertical drop accumulated
+      // player fire
+      shots: [],
+      fireCD: 0
     };
 
-    const resize = () => {
-      const ctx = canvas.getContext('2d');
-      const r = canvas.getBoundingClientRect();
-      ctx.setTransform(r.width / state.W, 0, 0, r.height / state.H, 0, 0);
-    };
-    resize();
-    this._onResize = resize;
-    window.addEventListener('resize', this._onResize);
+    // Ensure paddle exists for bottom reference; renderer likely draws it already.
+    state.paddleX = state.paddleX || (W - 120) / 2;
   },
 
-  _finish(state) {
-    restoreBricks(state);
-    clearSnapshots(state);
+  update(dt, input, state) {
+    const W = 960, H = 600;
+    const M = state.morph;
+    if (!M) return;
 
-    // hand back to Ball mode; launch a ball upward from paddle center
-    state.toMode = 'ball';
-    const x = state.paddle.x + state.paddle.w / 2;
-    state._handoffBall = { x, y: state.paddle.y - 20, vx: 0, vy: -300, r: 8 };
-    window.removeEventListener('resize', this._onResize);
-  },
-
-  update(dt, io, state) {
-    const M = this.M;
+    // --- timer ---
     M.timer -= dt;
-    if (M.timer <= 0) return this._finish(state);
+    if (M.timer <= 0) return this.end(state, true);
 
-    // paddle + player fire
-    const mv = (io.right?1:0) - (io.left?1:0);
-    state.paddle.x = clamp(state.paddle.x + mv * state.paddle.speed * dt, 0, state.W - state.paddle.w);
-    M.cd -= dt;
-    if (io.fire && M.cd <= 0) {
-      M.cd = 0.16;
-      M.bullets.push({ x: state.paddle.x + state.paddle.w/2 - 2, y: state.paddle.y - 12, w:4, h:10, vy: 460 });
+    // --- move player paddle (for aiming) ---
+    const move = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    state.paddleX = Math.max(0, Math.min(W - 120, state.paddleX + 560 * move * dt));
+
+    // --- firing ---
+    M.fireCD -= dt;
+    if (input.space && M.fireCD <= 0) {
+      M.fireCD = FIRE_CD;
+      const x = state.paddleX + 60; // center of bottom paddle
+      const y = H - 50;
+      M.shots.push({ x, y, w: 4, h: 10, vy: BULLET_VY });
     }
 
-    // fleet horizontal motion
-    const shift = M.dir * M.step * dt * (M.speed/30);
-    for (const br of state.bricks) if (br.type !== 'broken') br.x += shift;
-
-    // edge bounce & drop
-    let edge = false;
-    for (const br of state.bricks) {
-      if (br.type === 'broken') continue;
-      if (br.x < 20 || br.x + br.w > state.W - 20) { edge = true; break; }
+    // --- advance shots + collide with mapped bricks ---
+    for (const b of M.shots) {
+      b.y += b.vy * dt;
+      if (hitMorphWithRect(state, b)) {
+        b.hit = true;
+        state.score += 5;
+        window.SFX?.brick?.();
+      }
     }
-    if (edge) {
+    M.shots = M.shots.filter(b => !b.hit && b.y > -24);
+
+    // --- animate invader block (by mutating mapped brick positions) ---
+    // accelerate tempo over time
+    M.speed += SPEED_GAIN * dt;
+    M.ox += M.dir * M.step * dt * (M.speed / 30);
+
+    const map = state._morph?.map || [];
+    // Compute bounding box using current animated positions
+    let minX = Infinity, maxX = -Infinity, maxY = -Infinity, anyAlive = false;
+    for (const m of map) {
+      if (!m.alive) continue;
+      anyAlive = true;
+      const nx = (m.base?.x ?? m.to.x) + M.ox;
+      const ny = (m.base?.y ?? m.to.y) + M.oy;
+      // apply to both the mapped rect and the backing brick so renderer stays in sync
+      m.to.x = nx; m.to.y = ny;
+      const br = state.bricks[m.src];
+      if (br) { br.x = nx; br.y = ny; br.w = m.to.w; br.h = m.to.h; }
+      if (nx < minX) minX = nx;
+      if (nx + m.to.w > maxX) maxX = nx + m.to.w;
+      if (ny + m.to.h > maxY) maxY = ny + m.to.h;
+    }
+
+    // All cleared early = win
+    if (!anyAlive) {
+      window.SFX?.win?.();
+      return this.end(state, true);
+    }
+
+    // Edge bounce → reverse and drop
+    const leftHit  = minX < 20;
+    const rightHit = maxX > W - 20;
+    if (leftHit || rightHit) {
       M.dir *= -1;
-      for (const br of state.bricks) if (br.type !== 'broken') br.y += M.drop;
-    }
-
-    // lose condition: fleet reaches paddle line
-    for (const br of state.bricks) {
-      if (br.type !== 'broken' && br.y + br.h > state.paddle.y - 20) {
-        return this._finish(state);
+      M.oy  += M.drop;
+      // Re-apply Y with new drop this frame
+      for (const m of map) {
+        if (!m.alive) continue;
+        const nx = (m.base?.x ?? m.to.x) + M.ox;
+        const ny = (m.base?.y ?? m.to.y) + M.oy;
+        m.to.x = nx; m.to.y = ny;
+        const br = state.bricks[m.src];
+        if (br) { br.x = nx; br.y = ny; }
       }
+      // Update maxY after drop to evaluate failure
+      maxY += M.drop;
     }
 
-    // bullets travel + hit bricks (aliens)
-    for (const bu of M.bullets) {
-      bu.y -= bu.vy * dt;
-      for (const br of state.bricks) {
-        if (br.type === 'broken') continue;
-        if (overlap(bu, br)) {
-          if (br.type !== 'unbreakable') {
-            br.type = 'broken';
-            state.score += 5; HUD.set.score(state.score);
-          }
-          bu.hit = true;
-        }
-      }
+    // Lose if block crosses paddle line
+    const PADDLE_Y = H - 38;
+    if (maxY > PADDLE_Y - 20) {
+      return this.end(state, false);
     }
-    M.bullets = M.bullets.filter(b => !b.hit && b.y > -12);
-
-    // win: all aliens down
-    if (state.bricks.every(b => b.type==='broken' || b.type==='unbreakable')) return this._finish(state);
   },
 
   draw(ctx, state) {
-    const M = this.M;
-    ctx.save();
-    ctx.clearRect(0,0,state.W,state.H);
-    fillBackground(ctx, state.W, state.H);
+    // Timer ring + simple legend. Bricks render via your global renderer.
+    const M = state.morph;
+    if (!M) return;
 
-    // draw the fleet using the bricks (green)
-    ctx.fillStyle = '#86efac';
-    for (const br of state.bricks) {
-      if (br.type !== 'broken') ctx.fillRect(br.x, br.y, br.w, br.h);
+    ctx.save();
+    // Timer
+    ctx.strokeStyle = '#86efac';
+    ctx.beginPath();
+    ctx.arc(30, 30, 18, -Math.PI / 2, -Math.PI / 2 + (M.timer / M.max) * Math.PI * 2);
+    ctx.stroke();
+
+    // Legend
+    const W = 960;
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = '#e5e7eb';
+    ctx.font = '13px system-ui';
+    const text = '←/→ move • Space fire';
+    const pad = 10, mw = ctx.measureText(text).width + pad * 2;
+    const x = W - mw - 12, y = 12;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, mw, 32);
+    ctx.fillStyle = '#e5e7eb'; ctx.fillText(text, x + pad, y + 21);
+
+    // Player shots
+    ctx.fillStyle = '#ffffff';
+    for (const b of (M.shots || [])) ctx.fillRect(b.x - 2, b.y - 10, 4, 10);
+
+    ctx.restore();
+  },
+
+  end(state, success) {
+    // lives / SFX
+    if (!success) {
+      state.lives = Math.max(0, (state.lives || 3) - 1);
+      try {
+        const el = document.getElementById('uiLives');
+        if (el) el.textContent = state.lives;
+      } catch {}
+      window.SFX?.lose?.();
+    } else {
+      window.SFX?.win?.();
     }
 
-    // paddle
-    drawPaddle(ctx, state.paddle);
+    // Put only surviving bricks back where they came from (broken ones stay gone)
+    restoreBricks(state);
 
-    // bullets
-    ctx.fillStyle = '#fffd8a';
-    for (const b of M.bullets) ctx.fillRect(b.x, b.y, b.w, b.h);
-
-    // timer ring
-    drawTimer(ctx, M.timer / M.timerMax, '#86efac');
-
-    drawCRTOverlay(ctx);
-    ctx.restore();
+    // Return to Ball mode
+    state.toMode = 'ball';
   }
 };
-
-function overlap(a,b){
-  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
-}
-function drawTimer(ctx, frac, color){
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.globalAlpha = 0.8;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(30, 30, 18, -Math.PI/2, -Math.PI/2 + Math.max(0, frac)*Math.PI*2);
-  ctx.stroke();
-  ctx.restore();
-}
