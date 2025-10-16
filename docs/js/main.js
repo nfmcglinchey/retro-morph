@@ -12,24 +12,26 @@ import { MODES } from './modes/index.js';
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
-// --- create and hydrate state ---
+// === Create and hydrate state ===
 const state = createState();
 Object.assign(state.settings, loadSettings());
 setDifficulty(state.settings.diff);
 CRT.enabled = !!state.settings.crt;
 COLORBLIND.enabled = !!state.settings.cb;
 
-// ---- Unlock persistence and secret codes ----
+// === Unlock persistence and secret codes ===
 const UNLOCK_KEY = 'bb_unlocks';
 function loadUnlocks() {
-  try { return JSON.parse(localStorage.getItem(UNLOCK_KEY) || '{}'); } catch { return {}; }
+  try { return JSON.parse(localStorage.getItem(UNLOCK_KEY) || '{}'); }
+  catch { return {}; }
 }
 function saveUnlocks() {
-  try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(state.unlocks)); } catch {}
+  try { localStorage.setItem(UNLOCK_KEY, JSON.stringify(state.unlocks)); }
+  catch {}
 }
 Object.assign(state.unlocks, loadUnlocks());
 
-// refresh mini-game lock visuals
+// === Mini-game panel lock visuals ===
 function renderMiniLocks() {
   const panel = document.getElementById('miniPanel');
   if (!panel) return;
@@ -42,7 +44,7 @@ function renderMiniLocks() {
   });
 }
 
-// open Mini-Game panel
+// === Open mini-game panel ===
 function openMiniPanel() {
   const panel = document.getElementById('miniPanel');
   if (!panel) return;
@@ -50,15 +52,16 @@ function openMiniPanel() {
   panel.classList.remove('hidden');
 }
 
-// ---- HUD buttons ----
+// === HUD buttons ===
 document.getElementById('btnPause').onclick = () => {
   state.paused = !state.paused;
   HUD.set.status(state.paused ? 'Paused' : (state.running ? 'Running' : 'Ready'));
-  document.getElementById('btnPause').textContent = state.paused ? 'Resume (P)' : 'Pause (P)';
+  document.getElementById('btnPause').textContent =
+    state.paused ? 'Resume (P)' : 'Pause (P)';
 };
 document.getElementById('btnReset').onclick = () => MODES.ball.reset(state);
 
-// ---- Settings / panels ----
+// === Settings / panels ===
 Panels.mount(state, {
   onChange(s) {
     saveSettings(s);
@@ -68,31 +71,34 @@ Panels.mount(state, {
   }
 });
 
-// ---- Input bindings ----
-Input.bind();         // ensure keyboard works for all modes (esp. River)
+// === Input bindings ===
+Input.bind();         // keyboard (fixes Space not firing)
 Input.bindTouch();
 window.addEventListener('keydown', e => {
   if (e.code === 'KeyP') {
     state.paused = !state.paused;
     HUD.set.status(state.paused ? 'Paused' : (state.running ? 'Running' : 'Ready'));
-    document.getElementById('btnPause').textContent = state.paused ? 'Resume (P)' : 'Pause (P)';
+    document.getElementById('btnPause').textContent =
+      state.paused ? 'Resume (P)' : 'Pause (P)';
   }
 });
 
-// ---- Secret Codes: NEAL & Konami ----
-const KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','KeyB','KeyA'];
+// === Secret Codes: NEAL & Konami ===
+const KONAMI = [
+  'ArrowUp','ArrowUp','ArrowDown','ArrowDown',
+  'ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','KeyB','KeyA'
+];
 let konamiIdx = 0;
+
 const NEAL = ['KeyN','KeyE','KeyA','KeyL'];
 let nealIdx = 0;
 
 window.addEventListener('keydown', (e) => {
-  // Konami tracker
+  // --- Konami tracker ---
   if (e.code === KONAMI[konamiIdx]) {
     konamiIdx++;
     if (konamiIdx === KONAMI.length) {
       konamiIdx = 0;
-
-      // Unlock River + grant 99 lives
       state.unlocks.river = true;
       state.lives = 99;
       try {
@@ -101,23 +107,24 @@ window.addEventListener('keydown', (e) => {
       } catch {}
       saveUnlocks();
       renderMiniLocks();
-      try { HUD.set.status('Konami unlocked: River Raid + 99 Lives'); } catch {}
+      HUD.set.status('Konami unlocked: River Raid + 99 Lives');
       window.SFX?.win?.();
     }
   } else {
     konamiIdx = (e.code === KONAMI[0]) ? 1 : 0;
   }
 
-  // NEAL tracker (case-insensitive)
+  // --- NEAL tracker (case-insensitive) ---
   if (e.code === NEAL[nealIdx]) {
     nealIdx++;
     if (nealIdx === NEAL.length) {
       nealIdx = 0;
-      ['pong','pac','tron','asteroids','invaders','snake'].forEach(k => state.unlocks[k] = true);
+      ['pong','pac','tron','asteroids','invaders','snake']
+        .forEach(k => state.unlocks[k] = true);
       saveUnlocks();
       renderMiniLocks();
       openMiniPanel();
-      try { HUD.set.status('Mini-Game Select unlocked'); } catch {}
+      HUD.set.status('Mini-Game Select unlocked');
       window.SFX?.power?.();
     }
   } else {
@@ -125,8 +132,8 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ---- Bind Mini-Game panel buttons ----
-(function bindMiniStartButtons(){
+// === Bind Mini-Game panel buttons ===
+(function bindMiniStartButtons() {
   const panel = document.getElementById('miniPanel');
   if (!panel) return;
   panel.querySelectorAll('.mini .btnStart').forEach(btn => {
@@ -134,7 +141,8 @@ window.addEventListener('keydown', (e) => {
       const tile = btn.closest('.mini');
       if (!tile) return;
       const kind = tile.getAttribute('data-kind');
-      const locked = (kind === 'river') ? !state.unlocks.river : !state.unlocks[kind];
+      const locked =
+        (kind === 'river') ? !state.unlocks.river : !state.unlocks[kind];
       if (locked) return;
       state.toMode = kind;
       panel.classList.add('hidden');
@@ -142,30 +150,38 @@ window.addEventListener('keydown', (e) => {
   });
 })();
 
-// ---- Start in Ball mode ----
+// === Start in Ball mode ===
 MODES.ball.start(state, canvas);
 
-// ---- FPS meter ----
+// === FPS meter ===
 const fpsEl = document.getElementById('fps');
 let lastFpsT = performance.now(), frames = 0;
 
-// ---- Main loop ----
+// === Clear frame (removes trails) ===
+function clearFrame() {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+// === Main loop ===
 function frame(ts) {
   const dt = Math.min(0.033, ((ts - (state.clock.last || ts)) / 1000));
   state.clock.last = ts;
 
-  // update current mode
+  // --- update ---
   if (!state.paused) {
     MODES[state.mode].update(dt, Input.read(), state);
   }
 
-  // handle mode switches
+  // --- handle mode switches ---
   if (state.toMode && MODES[state.toMode]) {
     MODES[state.toMode].start(state, canvas);
     state.toMode = null;
   }
 
-  // mini-game handoff back to Ball
+  // --- mini-game handoff back to Ball ---
   if (state._handoffBall && state.mode === 'ball') {
     const b = state._handoffBall;
     state.balls = [{ x: b.x, y: b.y, vx: b.vx, vy: b.vy, r: b.r }];
@@ -173,14 +189,18 @@ function frame(ts) {
     state._handoffBall = null;
   }
 
-  // draw
+  // --- clear frame before drawing (fixes ghosting) ---
+  clearFrame();
+
+  // --- draw ---
   MODES[state.mode].draw(ctx, state);
   if (CRT.enabled) drawCRTOverlay(ctx);
 
-  // FPS meter update
+  // --- FPS meter ---
   frames++;
   if (ts - lastFpsT >= 500) {
-    fpsEl.textContent = `${Math.round(1000 * frames / (ts - lastFpsT))} fps`;
+    fpsEl.textContent =
+      `${Math.round(1000 * frames / (ts - lastFpsT))} fps`;
     frames = 0;
     lastFpsT = ts;
   }
