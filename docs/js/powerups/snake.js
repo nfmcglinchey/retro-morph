@@ -1,1 +1,7 @@
-export default { id:'snake', label:'Snake', apply(state){ state.toMode='snake'; } };
+export default {
+  id: 'snake',
+  label: 'Snake',
+  apply(state) {
+    state.toMode = 'snake';
+  }
+};
