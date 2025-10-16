@@ -1,1 +1,7 @@
-export default { id:'tron', label:'Tron', apply(state){ state.toMode='tron'; } };
+export default {
+  id: 'tron',
+  label: 'Tron',
+  apply(state) {
+    state.toMode = 'tron';
+  }
+};
