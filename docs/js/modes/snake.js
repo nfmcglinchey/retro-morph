@@ -1,158 +1,216 @@
 // docs/js/modes/snake.js
-// Mini-game: Snake (with brick-morph integration + persistent destruction)
+// Snake Mode (grid-locked 4-way). Eat bricks (pellets) to grow.
+// Colliding with yourself or the arena bounds ends the morph and costs a life.
 
-import {
-  compactBricks,
-  restoreBricks,
-  hitMorphWithCircle
-} from './brickMorph.js';
+import { compactBricks as arrangeGrid, restoreBricks as restoreGrid } from './brickMorph.js';
 
-// ---- Tunables ----
-const TIMER_SECS   = 30;
-const GRID_CFG     = { cols: 14, rows: 7, gap: 6, marginX: 70, topY: 70, height: 600 - 220 };
-const SNAKE_SPEED  = 240;  // base speed
-const BOOST_SPEED  = 320;  // when holding Space
-const TURN_RATE    = 2.2;  // rad/s
-const RADIUS       = 6;    // snake "segment" radius
-const MAX_TRAIL    = 40;   // base max, grows a bit with level
+const W = 960, H = 600;
+
+// --- tuning ---
+const CELL        = 20;      // grid cell size
+const STEP_HZ     = 10;      // snake steps per second (speed)
+const ROUND_TIME  = 22;      // seconds for the mode
+const START_LEN   = 5;       // initial body segments
+const GROW_LEN    = 1;       // growth per pellet
+const HEAD_R      = 8;
+
+// palette
+const C = {
+  bg:     '#0b0c15',
+  head:   '#67e8f9',
+  body:   '#22d3ee',
+  pellet: '#ffe066',
+  ui:     '#e5e7eb'
+};
 
 export default {
-  start(state, canvas) {
+  start(state /*, canvas */){
     state.mode = 'snake';
+    state._skipRebuildOnReturn = true;
 
-    // Rearrange remaining (unbroken) bricks into a mid-board grid.
-    compactBricks(state, {
-      x: GRID_CFG.marginX,
-      y: GRID_CFG.topY,
-      w: (canvas.width || 960) - GRID_CFG.marginX * 2,
-      h: GRID_CFG.height,
-      cols: GRID_CFG.cols,
-      rows: GRID_CFG.rows,
-      gap: GRID_CFG.gap
-    });
+    // Arrange remaining bricks into a compact grid so they're easy to "eat".
+    // Safe no-op if helpers are absent.
+    try { arrangeGrid?.(state, { x: 80, y: 70, w: W-160, h: 320, cols: 22, rows: 14, keepGaps: true }); } catch {}
 
-    const W = canvas.width || 960;
-    const H = canvas.height || 600;
+    // Build pellet list from all NOT-broken bricks, keeping an index back
+    // to persist the destruction into the main game.
+    const pellets = [];
+    for (let i=0; i<state.bricks.length; i++){
+      const br = state.bricks[i];
+      if (!br || br.type === 'broken') continue;
+      // pellet at the brick center, snapped to grid
+      const cx = snap(br.x + br.w/2);
+      const cy = snap(br.y + br.h/2);
+      pellets.push({ cx, cy, idx: i }); // idx → state.bricks index
+    }
 
-    // Seed from current ball position/velocity if available
-    const b  = (state.balls && state.balls[0]) || { x: W / 2, y: H * 0.60, vx: 280, vy: -280 };
-    const dir = Math.atan2(b.vy || -280, b.vx || 280);
+    // Make a clean snake centered near the bottom
+    const startX = snap(W/2);
+    const startY = snap(70 + 320 + 40);
+    const body = [];
+    for (let i=0; i<START_LEN; i++){
+      body.push({ x: startX - i*CELL, y: startY });
+    }
 
-    state.morph = {
-      kind:  'snake',
-      timer: TIMER_SECS,
-      max:   TIMER_SECS,
-      dir,
-      speed: SNAKE_SPEED,
-      body: [
-        { x: b.x,     y: b.y },
-        { x: b.x - 8, y: b.y },
-        { x: b.x -16, y: b.y }
-      ]
-    };
-  },
-
-  update(dt, input, state) {
-    const W = 960, H = 600;
-    const M = state.morph;
-    if (!M) return;
-
-    // --- timer ---
-    M.timer -= dt;
-    if (M.timer <= 0) return this.end(state, true);
-
-    // --- steering & movement ---
-    const steer = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-    M.dir += steer * TURN_RATE * dt;
-
-    const speed = input.space ? BOOST_SPEED : SNAKE_SPEED;
-    const head = {
-      x: M.body[0].x + Math.cos(M.dir) * speed * dt,
-      y: M.body[0].y + Math.sin(M.dir) * speed * dt
+    state._snake = {
+      t: 0,
+      timerMax: ROUND_TIME,
+      stepAcc: 0,
+      stepDt: 1 / STEP_HZ,
+      dir: { x: 1, y: 0 },        // moving right initially
+      want: { x: 1, y: 0 },       // buffered desired dir
+      body,                       // array of {x,y} in grid coords (px units)
+      grow: 0,
+      pellets,                    // array of {cx,cy,idx}
+      scoreOnEnter: state.score|0
     };
 
-    // --- wall collision -> lose ---
-    if (head.x < RADIUS || head.x > W - RADIUS || head.y < RADIUS || head.y > H - RADIUS) {
-      return this.end(state, false);
-    }
-
-    // --- eat mapped bricks (persistently break sources) ---
-    if (hitMorphWithCircle(state, head.x, head.y, RADIUS)) {
-      state.score += 12;
-      window.SFX?.brick?.();
-      // grow tail a bit
-      for (let g = 0; g < 4; g++) {
-        M.body.push({ ...M.body[M.body.length - 1] });
-      }
-    }
-
-    // --- self collision -> lose ---
-    for (let i = 6; i < M.body.length; i++) {
-      const p = M.body[i];
-      if (Math.hypot(head.x - p.x, head.y - p.y) < RADIUS) {
-        return this.end(state, false);
-      }
-    }
-
-    // --- advance body ---
-    M.body.unshift(head);
-    const level = state.level || 0;
-    const maxLen = MAX_TRAIL + Math.min(80, level * 5);
-    while (M.body.length > maxLen) M.body.pop();
+    // no regular ball during morph
+    state.balls = [];
+    state.running = true;
+    setText('uiMode', 'Snake');
+    setText('uiStatus', '4-way grid • Eat bricks • Avoid walls & tail');
   },
 
-  draw(ctx, state) {
-    const M = state.morph;
-    if (!M) return;
+  update(dt, input, state){
+    const S = state._snake;
+    if (!S) return;
 
-    // Timer ring
-    ctx.save();
-    ctx.strokeStyle = '#22d3ee';
-    ctx.beginPath();
-    ctx.arc(30, 30, 18, -Math.PI / 2, -Math.PI / 2 + (M.timer / M.max) * Math.PI * 2);
-    ctx.stroke();
+    // timer end → handoff a live ball
+    S.t += dt;
+    if (S.t >= S.timerMax || S.pellets.length === 0){
+      window.SFX?.win?.();
+      const head = S.body[0];
+      return this._handoffToBall(state, { x: head.x, y: head.y, vx: 300, vy: -300, r: HEAD_R });
+    }
 
-    // Snake body
-    for (let i = 0; i < M.body.length; i++) {
-      const p = M.body[i];
+    // buffered input (prevent 180° immediate reversals)
+    if (input.left  && !(S.dir.x ===  1 && S.dir.y === 0)) S.want = { x:-1, y: 0 };
+    if (input.right && !(S.dir.x === -1 && S.dir.y === 0)) S.want = { x: 1, y: 0 };
+    if (input.up    && !(S.dir.x ===  0 && S.dir.y === 1)) S.want = { x: 0, y:-1 };
+    if (input.down  && !(S.dir.x ===  0 && S.dir.y ===-1)) S.want = { x: 0, y: 1 };
+
+    // advance in fixed steps for crisp grid movement
+    S.stepAcc += dt;
+    while (S.stepAcc >= S.stepDt){
+      S.stepAcc -= S.stepDt;
+
+      // apply buffered turn at cell boundary
+      if ((S.want.x !== S.dir.x || S.want.y !== S.dir.y)) {
+        // turning is always valid in snake (no walls inside arena)
+        S.dir = { x: S.want.x, y: S.want.y };
+      }
+
+      const head = S.body[0];
+      const nx = clamp(head.x + S.dir.x * CELL, CELL, W - CELL);
+      const ny = clamp(head.y + S.dir.y * CELL, CELL, H - 60 - CELL);
+
+      // bounds collision
+      if (nx <= CELL-1 || nx >= W-CELL+1 || ny <= CELL-1 || ny >= H-60-CELL+1){
+        return this._die(state);
+      }
+
+      // self collision
+      for (let i=0; i<S.body.length; i++){
+        const seg = S.body[i];
+        if (seg.x === nx && seg.y === ny){
+          return this._die(state);
+        }
+      }
+
+      // move: push new head
+      S.body.unshift({ x: nx, y: ny });
+
+      // pellet eat?
+      let ate = false;
+      for (const p of S.pellets){
+        if (p.cx === nx && p.cy === ny){
+          // persistently break backing brick
+          const br = state.bricks[p.idx];
+          if (br && br.type !== 'broken'){
+            br.type = 'broken';
+            state.score = (state.score|0) + 12;
+            window.SFX?.brick?.();
+          }
+          p._eat = true;
+          ate = true;
+          S.grow += GROW_LEN;
+          break;
+        }
+      }
+      S.pellets = S.pellets.filter(p => !p._eat);
+
+      // growth control
+      if (S.grow > 0) S.grow--;
+      else S.body.pop(); // drop tail if not growing
+    }
+  },
+
+  draw(ctx, state){
+    const S = state._snake;
+    if (!S) return;
+
+    // clean frame (no CRT circle)
+    ctx.fillStyle = C.bg;
+    ctx.fillRect(0,0,W,H);
+
+    // pellets
+    ctx.fillStyle = C.pellet;
+    for (const p of S.pellets){
       ctx.beginPath();
-      ctx.arc(p.x, p.y, RADIUS, 0, Math.PI * 2);
-      const hue = (i * 6 + performance.now() / 20) % 360;
-      ctx.fillStyle = `hsl(${hue},90%,60%)`;
+      ctx.arc(p.cx, p.cy, 4, 0, Math.PI*2);
       ctx.fill();
     }
 
-    // Legend
-    const W = 960;
-    ctx.globalAlpha = 0.85;
-    ctx.fillStyle = '#e5e7eb';
-    ctx.font = '13px system-ui';
-    const text = '←/→ steer • Eat bricks';
-    const pad = 10, mw = ctx.measureText(text).width + pad * 2;
-    const x = W - mw - 12, y = 12;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(x, y, mw, 32);
-    ctx.fillStyle = '#e5e7eb'; ctx.fillText(text, x + pad, y + 21);
+    // body
+    for (let i=1; i<S.body.length; i++){
+      const b = S.body[i];
+      ctx.fillStyle = C.body;
+      ctx.fillRect(b.x - 8, b.y - 8, 16, 16);
+    }
 
+    // head
+    const h = S.body[0];
+    ctx.fillStyle = C.head;
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, HEAD_R, 0, Math.PI*2);
+    ctx.fill();
+
+    // timer ring
+    const remain = 1 - (S.t / S.timerMax);
+    ctx.save(); ctx.translate(30,30);
+    ctx.strokeStyle = C.ui;
+    ctx.beginPath(); ctx.arc(0,0,18,-Math.PI/2,-Math.PI/2 + remain*2*Math.PI); ctx.stroke();
     ctx.restore();
   },
 
-  end(state, success) {
-    // lives / SFX
-    if (!success) {
-      state.lives = Math.max(0, (state.lives || 3) - 1);
-      try {
-        const el = document.getElementById('uiLives');
-        if (el) el.textContent = state.lives;
-      } catch {}
-      window.SFX?.lose?.();
+  _die(state){
+    state.lives = Math.max(0, (state.lives||3) - 1);
+    window.SFX?.lose?.();
+    return this._handoffToBall(state, null);
+  },
+
+  _handoffToBall(state, hand){
+    try { restoreGrid?.(state); } catch {}
+    state._snake = null;
+    state.mode = 'ball';
+
+    if (hand){
+      state.balls = [{ x: clamp(hand.x, 8, W-8), y: clamp(hand.y, 8, H-60), vx: hand.vx, vy: hand.vy, r: hand.r }];
+      state.running = true;
+      setText('uiStatus','Running');
     } else {
-      window.SFX?.win?.();
+      const px = state.paddleX ?? (W-120)/2;
+      state.balls = [{ x: px + 60, y: H - 48, vx:0, vy:0, r: HEAD_R }];
+      state.running = false;
+      setText('uiStatus','Ready');
     }
-
-    // Only surviving bricks return to their original positions
-    restoreBricks(state);
-
-    // Return to Ball mode
-    state.toMode = 'ball';
+    setText('uiMode','Ball');
   }
 };
+
+/* ---------- helpers ---------- */
+
+function setText(id, v){ try{ const el=document.getElementById(id); if(el) el.textContent=v; }catch{} }
+function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
+function snap(v){ return Math.round(v / CELL) * CELL; }
