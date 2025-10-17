@@ -1,7 +1,7 @@
 // docs/js/modes/pong.js
 // Classic rally mini-game. Bottom paddle is the same one as Ball mode.
 
-import { arrangeGrid, restoreGrid } from './brickMorph.js'; // no-op if not implemented
+import { compactBricks as arrangeGrid, restoreBricks as restoreGrid } from './brickMorph.js'; // no-op if not implemented
 
 const W = 960, H = 600;
 const PAD_W = 120, PAD_H = 16;
@@ -132,3 +132,4 @@ export default {
 function setText(id, v){ try{ const el=document.getElementById(id); if(el) el.textContent=v; }catch{} }
 function clamp(n,a,b){ return Math.max(a, Math.min(b,n)); }
 function cap(p){ const s=Math.hypot(p.vx,p.vy); if (s>540){ const k=540/s; p.vx*=k; p.vy*=k; } }
+
